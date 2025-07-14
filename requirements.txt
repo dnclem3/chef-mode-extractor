@@ -1,4 +1,4 @@
-recipe-scrapers==14.55.0
+recipe-scrapers==16.1.0 # Updated to a version that supports requests_kwargs
 beautifulsoup4==4.12.3
 requests==2.31.0
 extruct>=0.8.0
