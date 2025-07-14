@@ -9,13 +9,10 @@
       {
         "src": "/extract",
         "dest": "/api/extract_recipe.py",
-        "methods": ["GET"],
-        "headers": {
-          "x-api-key": "$EXTRACTOR_API_KEY"
-        }
+        "methods": ["GET"]
       }
     ],
     "env": {
       "VERCEL_PYTHON_RUNTIME": "python3.9"
     }
-  }
+}

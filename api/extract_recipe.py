@@ -71,6 +71,26 @@ else:
     from http.server import BaseHTTPRequestHandler
     class handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            # API Key validation
+            expected_api_key = os.environ.get('EXTRACTOR_API_KEY')
+            if not expected_api_key:
+                logger.error("EXTRACTOR_API_KEY environment variable not set on server.")
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Server configuration error: API Key missing.'}).encode('utf-8'))
+                return
+
+            client_api_key = self.headers.get('x-api-key')
+            if not client_api_key or client_api_key != expected_api_key:
+                logger.warning(f"Unauthorized access attempt. Client API Key: {client_api_key}")
+                self.send_response(401)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Unauthorized: Invalid or missing API Key.'}).encode('utf-8'))
+                return
+
+            # Proceed with recipe extraction if authenticated
             parsed_url = urlparse(self.path)
             params = parse_qs(parsed_url.query)
             url = params.get('url', [None])[0]
@@ -101,4 +121,4 @@ else:
                 self.end_headers()
                 self.wfile.write(json.dumps({'error': result["error"]}).encode('utf-8'))
 
-    sys.modules['__main__'].handler = handler # type: ignore 
+    sys.modules['__main__'].handler = handler # type: ignore
