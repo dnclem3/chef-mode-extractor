@@ -1,4 +1,4 @@
-import requests # Make sure this import is at the top
+# REMOVE: import requests # Remove this line from the top of the file
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 import json
@@ -21,29 +21,16 @@ def extract_recipe(url, user_agent_from_request='default'):
         headers['User-Agent'] = user_agent_from_request
 
     try:
-        logger.debug(f"Attempting to fetch URL: {url}")
-        logger.debug(f"Using User-Agent for fetch: {headers['User-Agent']}")
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        html_content = response.text
-        
-        logger.debug(f"Fetched HTML content (first 500 chars): {html_content[:500]}")
-        if 'recipeIngredient' in html_content:
-            logger.debug("Found 'recipeIngredient' string in fetched HTML.")
-        if "1.5 pounds skinless, boneless chicken breast halves" in html_content:
-            logger.debug("Found exact ingredient text in fetched HTML.")
-        else:
-            logger.warning("Did NOT find exact ingredient text in fetched HTML. Content might differ.")
+        logger.debug(f"Attempting to scrape recipe from URL: {url}")
+        logger.debug(f"Using User-Agent for scraping: {headers['User-Agent']}")
 
-        # Pass the HTML content to scrape_me (using html= instead of url=)
-        # REMOVED: wild_mode=True
+        # Pass the URL directly to scrape_me
+        # Pass requests_kwargs for custom headers
         scraper = scrape_me(
-            html=html_content,
-            org_url=url
+            url, # Pass the URL directly
+            requests_kwargs={'headers': headers} # Pass custom headers here
         )
-        logger.debug("Successfully created scraper instance from HTML content.")
+        logger.debug("Successfully created scraper instance.")
         
         ingredients = scraper.ingredients()
         logger.debug(f"Scraped ingredients: {ingredients}")
@@ -70,10 +57,7 @@ def extract_recipe(url, user_agent_from_request='default'):
         logger.debug("Successfully extracted recipe data.")
         
         return {"success": True, "data": recipe}
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Network or HTTP error during scraping: {str(e)}", exc_info=True)
-        return {"success": False, "error": f"Network or HTTP error during scraping: {str(e)}"}
-    except Exception as e:
+    except Exception as e: # Catch a broader Exception here, as network errors will be caught by recipe-scrapers
         logger.error(f"Error extracting recipe: {str(e)}", exc_info=True)
         return {"success": False, "error": str(e)}
 
