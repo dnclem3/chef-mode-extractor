@@ -1,4 +1,4 @@
-import requests # <--- ADD THIS IMPORT at the very top
+# REMOVE: import requests # <--- Ensure this line is removed if it was added
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 import json
@@ -11,30 +11,22 @@ from recipe_scrapers import scrape_me
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+# The user_agent_from_request parameter is kept in the signature for consistency
+# with the handler, but it will no longer be used by scrape_me itself.
 def extract_recipe(url, user_agent_from_request='default'):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    
-    if user_agent_from_request and user_agent_from_request != 'default':
-        headers['User-Agent'] = user_agent_from_request
-
-    # --- Create a requests session and set headers ---
-    session = requests.Session()
-    session.headers.update(headers)
-    logger.debug(f"Created requests session with User-Agent: {session.headers['User-Agent']}")
-    # --- END ADDED ---
+    # REMOVED: All headers and requests.Session setup.
+    # scrape_me will now use its default internal HTTP client.
 
     try:
         logger.debug(f"Attempting to scrape recipe from URL: {url}")
-        
-        # Pass the requests session to scrape_me using 'requests_session'
-        # This bypasses the problematic 'requests_kwargs' argument
-        scraper = scrape_me(
-            url,
-            requests_session=session # <--- KEY CHANGE: using requests_session
-        )
-        logger.debug("Successfully created scraper instance.")
+        # Log that no custom User-Agent is being passed to the scraper
+        logger.debug("Using recipe-scrapers' default internal HTTP client (no custom User-Agent passed).")
+
+        # --- Revert to the simplest scrape_me call ---
+        # No 'requests_kwargs' or 'requests_session' arguments.
+        scraper = scrape_me(url)
+        logger.debug("Successfully created scraper instance with default client.")
+        # --- END simple scrape_me call ---
         
         ingredients = scraper.ingredients()
         logger.debug(f"Scraped ingredients: {ingredients}")
@@ -118,6 +110,7 @@ else:
                 self.wfile.write(json.dumps({'error': 'URL is required'}).encode('utf-8'))
                 return
 
+            # Pass the user_agent_from_request_header, though it's currently unused by extract_recipe's core logic
             result = extract_recipe(url, user_agent_from_request_header)
             logger.debug(f"Extract result: {json.dumps(result)}")
             
