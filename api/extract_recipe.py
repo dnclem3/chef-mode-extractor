@@ -1,3 +1,4 @@
+import requests # Make sure this import is at the top
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 import json
@@ -10,24 +11,43 @@ from recipe_scrapers import scrape_me
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-def extract_recipe(url, user_agent='default'):
+def extract_recipe(url, user_agent_from_request='default'):
+    # Define a common browser User-Agent
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
     
+    if user_agent_from_request and user_agent_from_request != 'default':
+        headers['User-Agent'] = user_agent_from_request
+
     try:
-        logger.debug(f"Attempting to scrape recipe from URL: {url}")
-        logger.debug(f"Using User-Agent: {user_agent}")
+        logger.debug(f"Attempting to fetch URL: {url}")
+        logger.debug(f"Using User-Agent for fetch: {headers['User-Agent']}")
         
-        # Configure wild_mode for better compatibility
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        html_content = response.text
+        
+        logger.debug(f"Fetched HTML content (first 500 chars): {html_content[:500]}")
+        if 'recipeIngredient' in html_content:
+            logger.debug("Found 'recipeIngredient' string in fetched HTML.")
+        if "1.5 pounds skinless, boneless chicken breast halves" in html_content:
+            logger.debug("Found exact ingredient text in fetched HTML.")
+        else:
+            logger.warning("Did NOT find exact ingredient text in fetched HTML. Content might differ.")
+
+        # Pass the HTML content to scrape_me (using html= instead of url=)
+        # REMOVED: wild_mode=True
         scraper = scrape_me(
-            url,
-            wild_mode=True  # This enables more flexible parsing
+            html=html_content,
+            org_url=url
         )
-        logger.debug("Successfully created scraper instance")
+        logger.debug("Successfully created scraper instance from HTML content.")
         
-        # Get ingredients first and log them
         ingredients = scraper.ingredients()
-        logger.debug(f"Extracted ingredients: {ingredients}")
+        logger.debug(f"Scraped ingredients: {ingredients}")
         
-        # Get instructions and log them
         instructions = scraper.instructions_list()
         logger.debug(f"Extracted instructions: {instructions}")
         
@@ -47,9 +67,12 @@ def extract_recipe(url, user_agent='default'):
                 "steps": instructions 
             }
         }
-        logger.debug("Successfully extracted recipe data")
+        logger.debug("Successfully extracted recipe data.")
         
         return {"success": True, "data": recipe}
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Network or HTTP error during scraping: {str(e)}", exc_info=True)
+        return {"success": False, "error": f"Network or HTTP error during scraping: {str(e)}"}
     except Exception as e:
         logger.error(f"Error extracting recipe: {str(e)}", exc_info=True)
         return {"success": False, "error": str(e)}
@@ -68,7 +91,6 @@ if __name__ == "__main__":
         sys.exit(1)
 else:
     logger.debug("Running in serverless function mode")
-    # For Vercel serverless function
     from http.server import BaseHTTPRequestHandler
     class handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -95,10 +117,10 @@ else:
             parsed_url = urlparse(self.path)
             params = parse_qs(parsed_url.query)
             url = params.get('url', [None])[0]
-            user_agent = self.headers.get('user-agent', 'default')
+            user_agent_from_request_header = self.headers.get('user-agent', 'default')
 
             logger.debug(f"Received request for URL: {url}")
-            logger.debug(f"User-Agent: {user_agent}")
+            logger.debug(f"Client User-Agent: {user_agent_from_request_header}")
 
             if not url:
                 logger.error("No URL provided in request")
@@ -108,7 +130,7 @@ else:
                 self.wfile.write(json.dumps({'error': 'URL is required'}).encode('utf-8'))
                 return
 
-            result = extract_recipe(url, user_agent)
+            result = extract_recipe(url, user_agent_from_request_header)
             logger.debug(f"Extract result: {json.dumps(result)}")
             
             if result["success"]:
