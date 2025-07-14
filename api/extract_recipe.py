@@ -1,4 +1,4 @@
-# REMOVE: import requests # Ensure this line is still removed from the top of the file
+import requests # <--- ADD THIS IMPORT at the very top
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 import json
@@ -6,20 +6,12 @@ import sys
 import os
 import logging
 from recipe_scrapers import scrape_me
-import recipe_scrapers # <--- ADD THIS LINE to import the top-level package
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 def extract_recipe(url, user_agent_from_request='default'):
-    # --- ADD THESE LINES TO LOG THE VERSION ---
-    try:
-        logger.info(f"recipe-scrapers version: {recipe_scrapers.__version__}") # type: ignore
-    except AttributeError:
-        logger.warning("Could not determine recipe-scrapers version.")
-    # --- END ADDED LINES ---
-
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
@@ -27,13 +19,20 @@ def extract_recipe(url, user_agent_from_request='default'):
     if user_agent_from_request and user_agent_from_request != 'default':
         headers['User-Agent'] = user_agent_from_request
 
+    # --- Create a requests session and set headers ---
+    session = requests.Session()
+    session.headers.update(headers)
+    logger.debug(f"Created requests session with User-Agent: {session.headers['User-Agent']}")
+    # --- END ADDED ---
+
     try:
         logger.debug(f"Attempting to scrape recipe from URL: {url}")
-        logger.debug(f"Using User-Agent for scraping: {headers['User-Agent']}")
-
+        
+        # Pass the requests session to scrape_me using 'requests_session'
+        # This bypasses the problematic 'requests_kwargs' argument
         scraper = scrape_me(
-            url, # Pass the URL directly
-            requests_kwargs={'headers': headers} # Pass custom headers here
+            url,
+            requests_session=session # <--- KEY CHANGE: using requests_session
         )
         logger.debug("Successfully created scraper instance.")
         
