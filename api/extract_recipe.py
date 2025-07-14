@@ -1,4 +1,4 @@
-# REMOVE: import requests # Remove this line from the top of the file
+# REMOVE: import requests # Ensure this line is still removed from the top of the file
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 import json
@@ -6,13 +6,20 @@ import sys
 import os
 import logging
 from recipe_scrapers import scrape_me
+import recipe_scrapers # <--- ADD THIS LINE to import the top-level package
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 def extract_recipe(url, user_agent_from_request='default'):
-    # Define a common browser User-Agent
+    # --- ADD THESE LINES TO LOG THE VERSION ---
+    try:
+        logger.info(f"recipe-scrapers version: {recipe_scrapers.__version__}") # type: ignore
+    except AttributeError:
+        logger.warning("Could not determine recipe-scrapers version.")
+    # --- END ADDED LINES ---
+
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
@@ -24,8 +31,6 @@ def extract_recipe(url, user_agent_from_request='default'):
         logger.debug(f"Attempting to scrape recipe from URL: {url}")
         logger.debug(f"Using User-Agent for scraping: {headers['User-Agent']}")
 
-        # Pass the URL directly to scrape_me
-        # Pass requests_kwargs for custom headers
         scraper = scrape_me(
             url, # Pass the URL directly
             requests_kwargs={'headers': headers} # Pass custom headers here
@@ -57,7 +62,7 @@ def extract_recipe(url, user_agent_from_request='default'):
         logger.debug("Successfully extracted recipe data.")
         
         return {"success": True, "data": recipe}
-    except Exception as e: # Catch a broader Exception here, as network errors will be caught by recipe-scrapers
+    except Exception as e:
         logger.error(f"Error extracting recipe: {str(e)}", exc_info=True)
         return {"success": False, "error": str(e)}
 
