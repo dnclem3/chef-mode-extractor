@@ -10,15 +10,27 @@ from recipe_scrapers import scrape_me
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-def extract_recipe(url, user_agent='default'):
+def extract_recipe(url, user_agent_from_request='default'):
+    # Define a common browser User-Agent
+    # This helps mimic a regular browser and avoid bot detection
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    # If a specific user_agent was provided in the request (and it's not the default placeholder),
+    # prioritize that, otherwise use our hardcoded browser User-Agent.
+    if user_agent_from_request and user_agent_from_request != 'default':
+        headers['User-Agent'] = user_agent_from_request
+
     try:
         logger.debug(f"Attempting to scrape recipe from URL: {url}")
-        logger.debug(f"Using User-Agent: {user_agent}")
+        logger.debug(f"Using User-Agent for scraping: {headers['User-Agent']}")
         
-        # Configure wild_mode for better compatibility
+        # Configure wild_mode for better compatibility and pass headers
         scraper = scrape_me(
             url,
-            wild_mode=True  # This enables more flexible parsing
+            wild_mode=True,  # This enables more flexible parsing
+            requests_kwargs={'headers': headers} # Pass custom headers here
         )
         logger.debug("Successfully created scraper instance")
         
@@ -94,10 +106,11 @@ else:
             parsed_url = urlparse(self.path)
             params = parse_qs(parsed_url.query)
             url = params.get('url', [None])[0]
-            user_agent = self.headers.get('user-agent', 'default')
+            # Get user_agent from request header to pass to extract_recipe if needed
+            user_agent_from_request_header = self.headers.get('user-agent', 'default')
 
             logger.debug(f"Received request for URL: {url}")
-            logger.debug(f"User-Agent: {user_agent}")
+            logger.debug(f"Client User-Agent: {user_agent_from_request_header}")
 
             if not url:
                 logger.error("No URL provided in request")
@@ -107,7 +120,7 @@ else:
                 self.wfile.write(json.dumps({'error': 'URL is required'}).encode('utf-8'))
                 return
 
-            result = extract_recipe(url, user_agent)
+            result = extract_recipe(url, user_agent_from_request_header)
             logger.debug(f"Extract result: {json.dumps(result)}")
             
             if result["success"]:
