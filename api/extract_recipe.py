@@ -2,12 +2,11 @@
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 import google.generativeai as genai
-from google.genai import types
 import json
 import sys
 import os
 import logging
-from recipe_scrapers import scrape_me, exceptions as recipe_exceptions
+from recipe_scrapers import scrape_me
 import time
 
 # --- Gemini Integration Imports ---
