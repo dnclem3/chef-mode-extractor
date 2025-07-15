@@ -48,54 +48,50 @@ def call_gemini_for_step_ingredients(recipe_data: dict) -> dict:
 
     # Construct the prompt for Gemini
     # Ensure this prompt guides Gemini to output valid JSON consistently.
-    prompt_parts = ["""
-        You are an expert recipe assistant. Given a full list of ingredients and step-by-step cooking instructions, your task is to extract which ingredients are used in each individual step.
-
-        Follow these rules:
-
-        1. Only use ingredients exactly as written in the provided ingredient list. Include full quantities and preparation descriptions (e.g., “1 cup chopped onion”, not just “onion”).
-        2. Each step is identified by a 0-indexed string key (e.g., "0", "1", "2").
-        3. For each step, return an array of ingredient strings that are specifically used in that step. If no ingredients are used in a step, return an empty array.
-        4. If a step refers to a group of ingredients (e.g., “the dressing”), include all ingredients from the original list associated with that group.
-        5. If an ingredient appears in multiple steps, include it in each applicable step.
-        6. Maintain the exact formatting of ingredients from the original list — do not paraphrase or simplify.
-
-        Return the output as a **valid JSON object** structured like this:
-
-        {
-        "0": ["1 cup flour", "1 tsp salt"],
-        "1": ["2 eggs"],
-        "2": []
-}"""
+    prompt_parts = [
+        "You are an expert recipe assistant. Given the full list of ingredients and cooking steps, "
+        "identify and list the specific ingredients (with quantities if available) needed for EACH cooking step.",
+        "Provide the output as a JSON object where keys are 0-indexed step numbers (as strings, corresponding to the provided steps list) "
+        "and values are arrays of strings, each string being an ingredient specific to that step.",
+        "Example output: {'0': ['1 cup flour', '1 tsp salt'], '1': ['2 eggs']}",
+        "IMPORTANT: Return ONLY the JSON object. Do not include any explanations, Markdown, code blocks (like ```json), or additional text.",
         "\n--- Full Ingredients List ---",
         "\n".join(all_ingredients_for_prompt),
         "\n--- Cooking Steps ---",
         "\n".join([f"Step {i+1}: {step}" for i, step in enumerate(steps)]),
         "\n--- JSON Output for step_ingredients ---",
     ]
-
+    
     try:
         response = client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=prompt_parts
+            contents="".join(prompt_parts)  # Join into single string
         )
         
         # Log the raw response text for debugging Gemini's output
         logger.debug(f"Raw Gemini response text: {response.text}")
-
+        
         if response.text is None:
             logger.error("Gemini response text is None")
             return {}
-
+        
+        # Clean response: Strip potential Markdown code blocks
+        cleaned_text = response.text.strip()
+        if cleaned_text.startswith('```json'):
+            cleaned_text = cleaned_text[7:]  # Remove ```json
+        if cleaned_text.endswith('```'):
+            cleaned_text = cleaned_text[:-3]  # Remove trailing ```
+        cleaned_text = cleaned_text.strip()
+        
         # Attempt to parse Gemini's response as JSON
-        step_ingredients_response = json.loads(response.text)
+        step_ingredients_response = json.loads(cleaned_text)
         
         # Ensure keys are integers if Gemini returns strings for keys, for consistency with TypeScript interface
         final_step_ingredients = {int(k): v for k, v in step_ingredients_response.items()}
-
+        
         logger.info("Successfully received and parsed response from Gemini.")
         return final_step_ingredients
-
+    
     except json.JSONDecodeError as e:
         logger.error(f"Failed to decode JSON from Gemini response: {e}. Response text: {response.text}")
         return {}
