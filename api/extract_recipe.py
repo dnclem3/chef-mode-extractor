@@ -2,6 +2,7 @@
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from google import genai
+from google.genai import types
 import json
 import sys
 import os
