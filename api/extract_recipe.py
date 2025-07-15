@@ -48,12 +48,25 @@ def call_gemini_for_step_ingredients(recipe_data: dict) -> dict:
 
     # Construct the prompt for Gemini
     # Ensure this prompt guides Gemini to output valid JSON consistently.
-    prompt_parts = [
-        "You are an expert recipe assistant. Given the full list of ingredients and cooking steps, "
-        "identify and list the specific ingredients (with quantities if available) needed for EACH cooking step.",
-        "Provide the output as a JSON object where keys are 0-indexed step numbers (as strings, corresponding to the provided steps list) "
-        "and values are arrays of strings, each string being an ingredient specific to that step.",
-        "Example output: {'0': ['1 cup flour', '1 tsp salt'], '1': ['2 eggs']}",
+    prompt_parts = ["""
+        You are an expert recipe assistant. Given a full list of ingredients and step-by-step cooking instructions, your task is to extract which ingredients are used in each individual step.
+
+        Follow these rules:
+
+        1. Only use ingredients exactly as written in the provided ingredient list. Include full quantities and preparation descriptions (e.g., “1 cup chopped onion”, not just “onion”).
+        2. Each step is identified by a 0-indexed string key (e.g., "0", "1", "2").
+        3. For each step, return an array of ingredient strings that are specifically used in that step. If no ingredients are used in a step, return an empty array.
+        4. If a step refers to a group of ingredients (e.g., “the dressing”), include all ingredients from the original list associated with that group.
+        5. If an ingredient appears in multiple steps, include it in each applicable step.
+        6. Maintain the exact formatting of ingredients from the original list — do not paraphrase or simplify.
+
+        Return the output as a **valid JSON object** structured like this:
+
+        {
+        "0": ["1 cup flour", "1 tsp salt"],
+        "1": ["2 eggs"],
+        "2": []
+}"""
         "\n--- Full Ingredients List ---",
         "\n".join(all_ingredients_for_prompt),
         "\n--- Cooking Steps ---",
