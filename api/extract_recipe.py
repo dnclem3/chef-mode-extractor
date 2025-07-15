@@ -65,23 +65,24 @@ def call_gemini_for_step_ingredients(recipe_data: dict) -> dict:
         "Provide the output as a JSON object where keys are 0-indexed step numbers (as strings, corresponding to the provided steps list) "
         "and values are arrays of strings, each string being an ingredient specific to that step.",
         "Example output: {'0': ['1 cup flour', '1 tsp salt'], '1': ['2 eggs']}",
-        "IMPORTANT: Return ONLY the JSON object. Do not include any explanations, Markdown, code blocks (like ```json), or additional text.",
-        "\n--- Full Ingredients List ---",
-        "\n".join(all_ingredients_for_prompt),
-        "\n--- Cooking Steps ---",
-        "\n".join([f"Step {i+1}: {step}" for i, step in enumerate(steps)]),
-        "\n--- JSON Output for step_ingredients ---",
+        "IMPORTANT: Return ONLY the JSON object. Do not include any explanations, Markdown, code blocks (like ```json), or additional text."
     ]
     
+    gemini_input_for_log = {
+        "ingredients": all_ingredients_for_prompt,
+        "steps": steps
+    }
+    logger.debug(f"Stage: Gemini Processing - Input: {json.dumps(gemini_input_for_log, indent=2)}")
+
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
         response = model.generate_content("".join(prompt_parts))
         
         # Log the raw response text for debugging Gemini's output
-        logger.debug(f"Raw Gemini response text: {response.text}")
+        logger.debug(f"Stage: Gemini Processing - Raw Output: {response.text}")
         
         if response.text is None:
-            logger.error("Gemini response text is None")
+            logger.error("Stage: Gemini Processing - Error: Gemini response text is None")
             return {}
         
         # Clean response: Strip potential Markdown code blocks
@@ -98,76 +99,57 @@ def call_gemini_for_step_ingredients(recipe_data: dict) -> dict:
         # Ensure keys are integers if Gemini returns strings for keys, for consistency with TypeScript interface
         final_step_ingredients = {int(k): v for k, v in step_ingredients_response.items()}
         
-        logger.info("Successfully received and parsed response from Gemini.")
+        logger.info("Stage: Gemini Processing - Success: Successfully received and parsed response from Gemini.")
         return final_step_ingredients
     
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to decode JSON from Gemini response: {e}. Response text: {response.text}")
+        logger.error(f"Stage: Gemini Processing - Error: Failed to decode JSON from Gemini response: {e}. Response text: {response.text}")
         return {}
     except Exception as e:
-        logger.error(f"Error during Gemini API call or unexpected response: {e}", exc_info=True)
+        logger.error(f"Stage: Gemini Processing - Error: Unexpected error during API call: {e}", exc_info=True)
         return {}
 # ----------------------------------
 
-# The user_agent_from_request parameter is kept in the signature for consistency
-# with the handler.
-def extract_recipe_full(url, user_agent_from_request='default'):
+def extract_recipe_full(url):
     """
-    Extracts recipe data using recipe_scrapers and enriches it with step-specific
-    ingredients from Gemini.
+    Extracts core recipe data using recipe_scrapers, enriches it with step-specific
+    ingredients from Gemini, and handles errors gracefully.
+    This is the single source of truth for all recipe processing.
     """
     try:
         logger.debug(f"Attempting to scrape recipe from URL: {url}")
-        # Log that no custom User-Agent is being passed to the scraper
-        logger.debug("Using recipe-scrapers' default internal HTTP client (no custom User-Agent passed).")
-
-        # --- Initial scrape_me call ---
         scraper = scrape_me(url)
-        logger.debug("Successfully created scraper instance with default client.")
-        
-        ingredients_raw = scraper.ingredients()
-        logger.debug(f"Scraped raw ingredients: {ingredients_raw}")
-        
-        instructions = scraper.instructions_list()
-        logger.debug(f"Extracted instructions: {instructions}")
+        logger.debug("Successfully created scraper instance.")
 
-        # --- Parse ingredients into item and quantity ---
-        # This parsing aims to align with ExtractedRecipe's prep.ingredients structure.
-        parsed_ingredients = []
-        for ing_str in ingredients_raw:
-            parts = ing_str.split(' ', 1)
-            if len(parts) > 1:
-                parsed_ingredients.append({"quantity": parts[0], "item": parts[1]})
-            else:
-                parsed_ingredients.append({"quantity": None, "item": ing_str})
-        logger.debug(f"Parsed ingredients: {parsed_ingredients}")
-        # --- End ingredient parsing ---
-        
-        # Build initial recipe dictionary based on ExtractedRecipe interface
+        # --- Safely extract core recipe data ---
+        # Call scraper methods safely, providing default values if an attribute is missing.
         initial_recipe_data = {
-            "title": scraper.title(),
-            "image": scraper.image() if scraper.image() else None,
-            "totalTime": scraper.total_time() or 0, # Ensure totalTime is a number
-            "yields": scraper.yields(),
+            "title": getattr(scraper, 'title', lambda: 'No Title')(),
+            "totalTime": getattr(scraper, 'total_time', lambda: 0)(),
+            "yields": getattr(scraper, 'yields', lambda: 'N/A')(),
+            "ingredients": getattr(scraper, 'ingredients', lambda: [])(),
+            "instructions": getattr(scraper, 'instructions_list', lambda: [])(),
+            "image": getattr(scraper, 'image', lambda: None)(),
             "sourceUrl": url,
-            "prep": {
-                "ingredients": parsed_ingredients
-            },
-            "cook": {
-                "steps": instructions 
-            }
         }
+
+        # Structure data for Gemini call
+        recipe_for_gemini = {
+            "prep": {"ingredients": [{"item": ing} for ing in initial_recipe_data["ingredients"]]},
+            "cook": {"steps": initial_recipe_data["instructions"]}
+        }
+
         logger.debug("Successfully extracted initial recipe data.")
 
         # --- Call Gemini for step_ingredients ---
-        step_ingredients = call_gemini_for_step_ingredients(initial_recipe_data)
+        step_ingredients = call_gemini_for_step_ingredients(recipe_for_gemini)
         initial_recipe_data["step_ingredients"] = step_ingredients
         logger.debug(f"Enriched with step_ingredients from Gemini.")
-        # --- End Gemini call ---
         
         return {"success": True, "data": initial_recipe_data}
+
     except Exception as e:
-        logger.error(f"Error extracting or enriching recipe: {str(e)}", exc_info=True)
+        logger.error(f"Error extracting or enriching recipe from {url}: {str(e)}", exc_info=True)
         return {"success": False, "error": str(e)}
 
 # Handle both serverless function and command line usage
@@ -187,92 +169,45 @@ else:
     # This 'handler' class is for deployment environments like Vercel's Python runtime
     class handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            # --- Stage: Request Received ---
             start_time = time.time()
             logger.info("Stage: Request Received - Start")
-            try:
-                query = parse_qs(urlparse(self.path).query)
-                url = query.get('url', [None])[0]
-                if not url:
-                    self.send_error(400, "Missing 'url' query parameter")
-                    return
-                request_input = {'url': url, 'user_agent': self.headers.get('user-agent', 'default')}
-                logger.info(f"Stage: Request Received - Input: {request_input}")
-                request_success = True
-            except Exception as e:
-                logger.error(f"Stage: Request Received - Error: {str(e)}")
-                request_success = False
-            request_duration = time.time() - start_time
-            logger.info(f"Stage: Request Received - End - Success: {request_success}, Duration: {request_duration:.2f}s")
+            query = parse_qs(urlparse(self.path).query)
+            url = query.get('url', [None])[0]
+
+            if not url:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "Missing 'url' query parameter"}).encode('utf-8'))
+                logger.warning("Stage: Request Received - End: Responded with 400 due to missing URL.")
+                return
             
-            # Stage: Recipe Scraping
-            scrape_start = time.time()
-            logger.info("Stage: Recipe Scraping - Start")
-            try:
-                if not url:
-                    self.send_error(400, "Missing 'url' query parameter")
-                    return
-                assert url is not None  # Satisfy type checker
-                scraper = scrape_me(url) 
-                scraped_data = {
-                    'title': scraper.title(),
-                    'total_time': scraper.total_time(),
-                    'yields': scraper.yields(),
-                    'ingredients': scraper.ingredients(),
-                    'instructions': scraper.instructions(
-                }
-                scrape_output = scraped_data  # Full output for logging
-                scrape_success = True
-                logger.info(f"Stage: Recipe Scraping - Output: {json.dumps(scrape_output, indent=2)}")  # Log full scraped data
-            except Exception as e:
-                logger.error(f"Stage: Recipe Scraping - Error: {str(e)}")
-                scrape_success = False
-                scrape_output = {}
-                # Stop execution and return an error if scraping failed
+            request_duration = time.time() - start_time
+            logger.info(f"Stage: Request Received - End, Duration: {request_duration:.2f}s")
+
+            # --- Call the consolidated extraction function ---
+            result = extract_recipe_full(url)
+
+            # --- Stage: Response Assembly ---
+            assembly_start_time = time.time()
+            logger.info("Stage: Response Assembly - Start")
+            if result["success"]:
+                response_payload = json.dumps(result["data"], indent=2)
+                logger.info(f"Stage: Response Assembly - Final Output (200 OK):\n{response_payload}")
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(response_payload.encode('utf-8'))
+            else:
+                response_payload = json.dumps(result, indent=2)
+                logger.error(f"Stage: Response Assembly - Final Output (500 Error):\n{response_payload}")
                 self.send_response(500)
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
-                error_payload = {"success": False, "error": "Failed to scrape recipe data", "details": str(e)}
-                self.wfile.write(json.dumps(error_payload).encode('utf-8'))
-                return
-
-            scrape_duration = time.time() - scrape_start
-            logger.info(f"Stage: Recipe Scraping - End - Success: {scrape_success}, Duration: {scrape_duration:.2f}s")
+                self.wfile.write(response_payload.encode('utf-8'))
             
-            # Stage: Gemini Processing
-            gemini_start = time.time()
-            logger.info("Stage: Gemini Processing - Start")
-            try:
-                gemini_input = scraped_data  # Sanitized: full scraped data as input to Gemini
-                logger.info(f"Stage: Gemini Processing - Input: {json.dumps(gemini_input, indent=2)}")
-                step_ingredients = call_gemini_for_step_ingredients(scraped_data)
-                gemini_output = step_ingredients
-                gemini_success = True
-            except Exception as e:
-                logger.error(f"Stage: Gemini Processing - Error: {str(e)}")
-                gemini_success = False
-                gemini_output = {}
-            gemini_duration = time.time() - gemini_start
-            logger.info(f"Stage: Gemini Processing - End - Success: {gemini_success}, Duration: {gemini_duration:.2f}s, Output: {json.dumps(gemini_output, indent=2)}")
-            
-            # Stage: Response Assembly
-            assembly_start = time.time()
-            logger.info("Stage: Response Assembly - Start")
-            try:
-                assembly_input = {'scraped_data': scraped_data, 'step_ingredients': step_ingredients}
-                result = {'recipe': scraped_data, 'step_ingredients': step_ingredients}
-                assembly_output = result
-                assembly_success = True
-            except Exception as e:
-                logger.error(f"Stage: Response Assembly - Error: {str(e)}")
-                assembly_success = False
-                assembly_output = {}
-            assembly_duration = time.time() - assembly_start
-            logger.info(f"Stage: Response Assembly - End - Success: {assembly_success}, Duration: {assembly_duration:.2f}s, Output: {json.dumps(assembly_output, indent=2)}")
-            
-            # Send response
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps(result).encode('utf-8'))
+            assembly_duration = time.time() - assembly_start_time
+            logger.info(f"Stage: Response Assembly - End - Duration: {assembly_duration:.2f}s")
 
     sys.modules['__main__'].handler = handler # type: ignore
