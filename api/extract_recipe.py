@@ -7,6 +7,7 @@ import sys
 import os
 import logging
 from recipe_scrapers import scrape_me
+import time
 
 # --- Gemini Integration Imports ---
 
@@ -68,6 +69,10 @@ def call_gemini_for_step_ingredients(recipe_data: dict) -> dict:
         
         # Log the raw response text for debugging Gemini's output
         logger.debug(f"Raw Gemini response text: {response.text}")
+
+        if response.text is None:
+            logger.error("Gemini response text is None")
+            return {}
 
         # Attempt to parse Gemini's response as JSON
         step_ingredients_response = json.loads(response.text)
@@ -164,55 +169,102 @@ else:
     # This 'handler' class is for deployment environments like Vercel's Python runtime
     class handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            # API Key validation for the external service
-            expected_api_key = os.environ.get('EXTRACTOR_API_KEY')
-            if not expected_api_key:
-                logger.error("EXTRACTOR_API_KEY environment variable not set on server.")
-                self.send_response(500)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({'error': 'Server configuration error: API Key missing.'}).encode('utf-8'))
-                return
-
-            client_api_key = self.headers.get('x-api-key')
-            if not client_api_key or client_api_key != expected_api_key:
-                logger.warning(f"Unauthorized access attempt. Client API Key: {client_api_key}")
-                self.send_response(401)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({'error': 'Unauthorized: Invalid or missing API Key.'}).encode('utf-8'))
-                return
-
-            # Proceed with recipe extraction if authenticated
-            parsed_url = urlparse(self.path)
-            params = parse_qs(parsed_url.query)
-            url = params.get('url', [None])[0]
-            user_agent_from_request_header = self.headers.get('user-agent', 'default')
-
-            logger.debug(f"Received request for URL: {url}")
-            logger.debug(f"Client User-Agent: {user_agent_from_request_header}")
-
-            if not url:
-                logger.error("No URL provided in request")
-                self.send_response(400)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({'error': 'URL is required'}).encode('utf-8'))
-                return
-
-            # Call the full extraction and enrichment function
-            result = extract_recipe_full(url, user_agent_from_request_header)
-            logger.debug(f"Extract result: {json.dumps(result)}")
+            start_time = time.time()
+            logger.info("Stage: Request Received - Start")
+            try:
+                query = parse_qs(urlparse(self.path).query)
+                url = query.get('url', [None])[0]
+                if not url:
+                    self.send_error(400, "Missing 'url' query parameter")
+                    return
+                request_input = {'url': url, 'user_agent': self.headers.get('user-agent', 'default')}
+                logger.info(f"Stage: Request Received - Input: {request_input}")
+                request_success = True
+            except Exception as e:
+                logger.error(f"Stage: Request Received - Error: {str(e)}")
+                request_success = False
+            request_duration = time.time() - start_time
+            logger.info(f"Stage: Request Received - End - Success: {request_success}, Duration: {request_duration:.2f}s")
             
-            if result["success"]:
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps(result["data"]).encode('utf-8'))
-            else:
-                self.send_response(500)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({'error': result["error"]}).encode('utf-8'))
+            # Stage: Recipe Scraping
+            scrape_start = time.time()
+            logger.info("Stage: Recipe Scraping - Start")
+            try:
+                if not url:
+                    self.send_error(400, "Missing 'url' query parameter")
+                    return
+                assert url is not None  # Satisfy type checker
+                scraper = scrape_me(url, wild_mode=True)
+                scraped_data = {
+                    'title': scraper.title(),
+                    'total_time': scraper.total_time(),
+                    'yields': scraper.yields(),
+                    'ingredients': scraper.ingredients(),
+                    'instructions': scraper.instructions(),
+                    'image': scraper.image(),
+                    'host': scraper.host(),
+                    'canonical_url': scraper.canonical_url(),
+                    'nutrients': scraper.nutrients(),
+                    'ratings': scraper.ratings(),
+                    'reviews': scraper.reviews(),
+                    'author': scraper.author(),
+                    'cuisine': scraper.cuisine(),
+                    'category': scraper.category(),
+                    'cook_time': scraper.cook_time(),
+                    'prep_time': scraper.prep_time(),
+                    'description': scraper.description(),
+                    'keywords': scraper.keywords(),  # type: ignore
+                    'language': scraper.language(),
+                    'equipment': scraper.equipment(),
+                    'ingredient_groups': scraper.ingredient_groups(),
+                    'instructions_list': scraper.instructions_list(),
+                    'suitable_for_diet': scraper.suitable_for_diet(),  # type: ignore
+                }
+                scrape_output = scraped_data  # Full output for logging
+                scrape_success = True
+                logger.info(f"Stage: Recipe Scraping - Output: {json.dumps(scrape_output, indent=2)}")  # Log full scraped data
+            except Exception as e:
+                logger.error(f"Stage: Recipe Scraping - Error: {str(e)}")
+                scrape_success = False
+                scrape_output = {}
+            scrape_duration = time.time() - scrape_start
+            logger.info(f"Stage: Recipe Scraping - End - Success: {scrape_success}, Duration: {scrape_duration:.2f}s")
+            
+            # Stage: Gemini Processing
+            gemini_start = time.time()
+            logger.info("Stage: Gemini Processing - Start")
+            try:
+                gemini_input = scraped_data  # Sanitized: full scraped data as input to Gemini
+                logger.info(f"Stage: Gemini Processing - Input: {json.dumps(gemini_input, indent=2)}")
+                step_ingredients = call_gemini_for_step_ingredients(scraped_data)
+                gemini_output = step_ingredients
+                gemini_success = True
+            except Exception as e:
+                logger.error(f"Stage: Gemini Processing - Error: {str(e)}")
+                gemini_success = False
+                gemini_output = {}
+            gemini_duration = time.time() - gemini_start
+            logger.info(f"Stage: Gemini Processing - End - Success: {gemini_success}, Duration: {gemini_duration:.2f}s, Output: {json.dumps(gemini_output, indent=2)}")
+            
+            # Stage: Response Assembly
+            assembly_start = time.time()
+            logger.info("Stage: Response Assembly - Start")
+            try:
+                assembly_input = {'scraped_data': scraped_data, 'step_ingredients': step_ingredients}
+                result = {'recipe': scraped_data, 'step_ingredients': step_ingredients}
+                assembly_output = result
+                assembly_success = True
+            except Exception as e:
+                logger.error(f"Stage: Response Assembly - Error: {str(e)}")
+                assembly_success = False
+                assembly_output = {}
+            assembly_duration = time.time() - assembly_start
+            logger.info(f"Stage: Response Assembly - End - Success: {assembly_success}, Duration: {assembly_duration:.2f}s, Output: {json.dumps(assembly_output, indent=2)}")
+            
+            # Send response
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode('utf-8'))
 
     sys.modules['__main__'].handler = handler # type: ignore
