@@ -1,3 +1,21 @@
+# Python virtual environments
+venv/
+
+# Environment variables
+.env
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# IDE files
+.vscode/
+.idea/
+
+# Other common ignores
+.DS_Store
+Thumbs.db
+
 .vercel
-*.env
-venv/got a
