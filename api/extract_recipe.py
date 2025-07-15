@@ -212,31 +212,13 @@ else:
                     self.send_error(400, "Missing 'url' query parameter")
                     return
                 assert url is not None  # Satisfy type checker
-                scraper = scrape_me(url, wild_mode=True)
+                scraper = scrape_me(url) 
                 scraped_data = {
                     'title': scraper.title(),
                     'total_time': scraper.total_time(),
                     'yields': scraper.yields(),
                     'ingredients': scraper.ingredients(),
-                    'instructions': scraper.instructions(),
-                    'image': scraper.image(),
-                    'host': scraper.host(),
-                    'canonical_url': scraper.canonical_url(),
-                    'nutrients': scraper.nutrients(),
-                    'ratings': scraper.ratings(),
-                    'reviews': scraper.reviews(),
-                    'author': scraper.author(),
-                    'cuisine': scraper.cuisine(),
-                    'category': scraper.category(),
-                    'cook_time': scraper.cook_time(),
-                    'prep_time': scraper.prep_time(),
-                    'description': scraper.description(),
-                    'keywords': scraper.keywords(),  # type: ignore
-                    'language': scraper.language(),
-                    'equipment': scraper.equipment(),
-                    'ingredient_groups': scraper.ingredient_groups(),
-                    'instructions_list': scraper.instructions_list(),
-                    'suitable_for_diet': scraper.suitable_for_diet(),  # type: ignore
+                    'instructions': scraper.instructions(
                 }
                 scrape_output = scraped_data  # Full output for logging
                 scrape_success = True
@@ -245,6 +227,14 @@ else:
                 logger.error(f"Stage: Recipe Scraping - Error: {str(e)}")
                 scrape_success = False
                 scrape_output = {}
+                # Stop execution and return an error if scraping failed
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                error_payload = {"success": False, "error": "Failed to scrape recipe data", "details": str(e)}
+                self.wfile.write(json.dumps(error_payload).encode('utf-8'))
+                return
+
             scrape_duration = time.time() - scrape_start
             logger.info(f"Stage: Recipe Scraping - End - Success: {scrape_success}, Duration: {scrape_duration:.2f}s")
             
