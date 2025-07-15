@@ -1,16 +1,17 @@
 # REMOVED: import requests # <--- This line is correctly removed as per your instruction
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
-from google import genai
+import google.generativeai as genai
 from google.genai import types
 import json
 import sys
 import os
 import logging
-from recipe_scrapers import scrape_me
+from recipe_scrapers import scrape_me, exceptions as recipe_exceptions
 import time
 
 # --- Gemini Integration Imports ---
+# No additional imports needed here, handled by google.generativeai
 
 # ----------------------------------
 
@@ -21,8 +22,14 @@ logger = logging.getLogger(__name__)
 # --- Configure Gemini ---
 # Ensure your GEMINI_API_KEY environment variable is set in your deployment environment.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-client = genai.Client(api_key=GEMINI_API_KEY)
+if GEMINI_API_KEY:
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        logger.info("Gemini API configured successfully.")
+    except Exception as e:
+        logger.critical(f"Failed to configure Gemini API: {e}", exc_info=True)
+else:
+    logger.critical("GEMINI_API_KEY environment variable not set. Gemini features will be disabled.")
 
 # --- Gemini API Call Function ---
 def call_gemini_for_step_ingredients(recipe_data: dict) -> dict:
@@ -38,6 +45,10 @@ def call_gemini_for_step_ingredients(recipe_data: dict) -> dict:
               Example: {"0": ["ingredient A", "ingredient B"], "1": ["ingredient C"]}
               Returns an empty dictionary if API call fails or response is invalid.
     """
+    if not GEMINI_API_KEY:
+        logger.warning("Skipping Gemini call because GEMINI_API_KEY is not set.")
+        return {}
+        
     logger.info("Calling Gemini API for step ingredients...")
 
     steps = recipe_data.get("cook", {}).get("steps", [])
@@ -64,10 +75,8 @@ def call_gemini_for_step_ingredients(recipe_data: dict) -> dict:
     ]
     
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents="".join(prompt_parts)  # Join into single string
-        )
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content("".join(prompt_parts))
         
         # Log the raw response text for debugging Gemini's output
         logger.debug(f"Raw Gemini response text: {response.text}")
