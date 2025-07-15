@@ -75,7 +75,7 @@ def call_gemini_for_step_ingredients(recipe_data: dict) -> dict:
     ]
     
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         response = model.generate_content("".join(prompt_parts))
         
         # Log the raw response text for debugging Gemini's output
