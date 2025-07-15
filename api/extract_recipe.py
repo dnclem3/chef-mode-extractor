@@ -1,6 +1,7 @@
 # REMOVED: import requests # <--- This line is correctly removed as per your instruction
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+from google import genai
 import json
 import sys
 import os
@@ -8,7 +9,7 @@ import logging
 from recipe_scrapers import scrape_me
 
 # --- Gemini Integration Imports ---
-import google.generativeai as genai
+
 # ----------------------------------
 
 # Set up logging
@@ -19,14 +20,7 @@ logger = logging.getLogger(__name__)
 # Ensure your GEMINI_API_KEY environment variable is set in your deployment environment.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not GEMINI_API_KEY:
-    logger.critical("GEMINI_API_KEY environment variable is not set. Gemini integration will fail.")
-    # In a production system, you might want to raise an exception immediately
-    # or implement a fallback mechanism.
-else:
-    genai.configure(api_key=GEMINI_API_KEY)
-    logger.info("Gemini API configured.")
-# ------------------------
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # --- Gemini API Call Function ---
 def call_gemini_for_step_ingredients(recipe_data: dict) -> dict:
@@ -67,8 +61,10 @@ def call_gemini_for_step_ingredients(recipe_data: dict) -> dict:
     ]
 
     try:
-        model = genai.GenerativeModel(model_name="gemini-2.5-flash") # Use a suitable Gemini model
-        response = model.generate_content(prompt_parts)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt_parts
+        )
         
         # Log the raw response text for debugging Gemini's output
         logger.debug(f"Raw Gemini response text: {response.text}")
