@@ -41,8 +41,6 @@ def call_gemini_for_step_ingredients(recipe_data: dict) -> dict:
     
     Returns:
         dict: A dictionary mapping step indices (as strings) to a list of ingredients for that step.
-              Example: {"0": ["ingredient A", "ingredient B"], "1": ["ingredient C"]}
-              Returns an empty dictionary if API call fails or response is invalid.
     """
     if not GEMINI_API_KEY:
         logger.warning("Skipping Gemini call because GEMINI_API_KEY is not set.")
@@ -51,34 +49,66 @@ def call_gemini_for_step_ingredients(recipe_data: dict) -> dict:
     logger.info("Calling Gemini API for step ingredients...")
 
     steps = recipe_data.get("cook", {}).get("steps", [])
-    # Reconstruct the full ingredient strings for the prompt
-    all_ingredients_for_prompt = [
-        f"{ing.get('quantity', '') or ''} {ing.get('item', '')}".strip()
-        for ing in recipe_data.get("prep", {}).get("ingredients", [])
-    ]
+    # Simplify ingredient strings to just the essential information
+    ingredients = recipe_data.get("prep", {}).get("ingredients", [])
 
-    # Construct the prompt for Gemini
-    # Ensure this prompt guides Gemini to output valid JSON consistently.
-    prompt_parts = [
-        "You are an expert recipe assistant. Given the full list of ingredients and cooking steps, "
-        "identify and list the specific ingredients (with quantities if available) needed for EACH cooking step.",
-        "Provide the output as a JSON object where keys are 0-indexed step numbers (as strings, corresponding to the provided steps list) "
-        "and values are arrays of strings, each string being an ingredient specific to that step.",
-        "Example output: {'0': ['1 cup flour', '1 tsp salt'], '1': ['2 eggs']}",
-        "IMPORTANT: Return ONLY the JSON object. Do not include any explanations, Markdown, code blocks (like ```json), or additional text."
+    # Construct a more focused prompt
+    system_prompt = """
+    You are an expert recipe assistant. Your task is to identify which ingredients are used in each step of a recipe based on a provided list of ingredients and a list of step-by-step cooking instructions.
+
+    Follow these rules exactly:
+
+    1. Match ingredients directly from the provided list. Only include ingredients that are explicitly used in each instruction step.
+    2. Match ingredients **by intent**, even if phrasing or formatting differs slightly between the ingredient list and the instructions (e.g., “dice the onion” matches “1 yellow onion (small dice)”).
+    3. Normalize each item to a clean version (e.g., “1 yellow onion”, “2 cloves garlic”).
+    4. If a step does not use any ingredients, return an empty array for that step.
+    5. If a step refers to a group (e.g. “the sauce”), include all ingredients that make up that group if they’ve been introduced earlier in the instructions.
+    6. Return the final result as a valid JSON object. Keys must be 0-indexed strings representing the step number. Each value must be an array of ingredients (strings).
+
+    ---
+
+    💡 Example input:
+
+    ```json
+    {
+    "ingredients": [
+        "1 yellow onion (small dice)",
+        "2 cloves garlic (minced, 1 Tbsp, $0.12)",
+        "1 Tbsp olive oil ($0.18)",
+        "14.5 oz. diced tomatoes (1 can, $0.96)",
+        "1 tsp dried oregano ($0.12)",
+        ".5 tsp dried basil ($0.13)"
+    ],
+    "instructions": [
+        "Gather and prepare all ingredients.",
+        "Prepare the creamy tomato sauce. Dice the onion and mince the garlic. Add the onion, garlic, and olive oil to a large skillet and sauté over medium heat until the onions are soft and translucent (3-5 minutes).",
+        "Add the diced tomatoes (with juices), oregano, basil.",
+        "Turn the heat down to low."
     ]
-    
-    gemini_input_for_log = {
-        "ingredients": all_ingredients_for_prompt,
-        "steps": steps
     }
-    logger.debug(f"Stage: Gemini Processing - Input: {json.dumps(gemini_input_for_log, indent=2)}")
+
+    Example JSON Output:
+
+    {
+    "0": [],
+    "1": ["1 yellow onion", "2 cloves garlic", "1 Tbsp olive oil"],
+    "2": ["14.5 oz. diced tomatoes", "1 tsp dried oregano", ".5 tsp dried basil"],
+    "3": []
+    }
+    """
+    user_prompt = f"""Ingredients:
+{json.dumps(ingredients, indent=2)}
+
+Steps:
+{json.dumps(steps, indent=2)}"""
 
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
-        response = model.generate_content("".join(prompt_parts))
+        response = model.generate_content([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ])
         
-        # Log the raw response text for debugging Gemini's output
         logger.debug(f"Stage: Gemini Processing - Raw Output: {response.text}")
         
         if response.text is None:
@@ -88,15 +118,12 @@ def call_gemini_for_step_ingredients(recipe_data: dict) -> dict:
         # Clean response: Strip potential Markdown code blocks
         cleaned_text = response.text.strip()
         if cleaned_text.startswith('```json'):
-            cleaned_text = cleaned_text[7:]  # Remove ```json
+            cleaned_text = cleaned_text[7:]
         if cleaned_text.endswith('```'):
-            cleaned_text = cleaned_text[:-3]  # Remove trailing ```
+            cleaned_text = cleaned_text[:-3]
         cleaned_text = cleaned_text.strip()
         
-        # Attempt to parse Gemini's response as JSON
         step_ingredients_response = json.loads(cleaned_text)
-        
-        # Ensure keys are integers if Gemini returns strings for keys, for consistency with TypeScript interface
         final_step_ingredients = {int(k): v for k, v in step_ingredients_response.items()}
         
         logger.info("Stage: Gemini Processing - Success: Successfully received and parsed response from Gemini.")
@@ -135,7 +162,7 @@ def extract_recipe_full(url):
 
         # Structure data for Gemini call
         recipe_for_gemini = {
-            "prep": {"ingredients": [{"item": ing} for ing in initial_recipe_data["ingredients"]]},
+            "prep": {"ingredients": initial_recipe_data["ingredients"]},
             "cook": {"steps": initial_recipe_data["instructions"]}
         }
 
